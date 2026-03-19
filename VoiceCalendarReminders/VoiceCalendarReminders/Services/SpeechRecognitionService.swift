@@ -16,6 +16,10 @@ final class SpeechRecognitionService: ObservableObject {
     private var recognitionTask: SFSpeechRecognitionTask?
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
 
+    /// Fires after this many seconds of silence to auto-stop recording
+    private let silenceTimeout: TimeInterval = 1.5
+    private var silenceTimer: Timer?
+
     private init() {}
 
     func requestAuthorization() async -> Bool {
@@ -30,9 +34,9 @@ final class SpeechRecognitionService: ObservableObject {
     }
 
     func startRecording() throws {
-        // Clean up any previous session
         cleanupAudioEngine()
         cleanupTask()
+        cancelSilenceTimer()
         errorMessage = nil
 
         guard let speechRecognizer, speechRecognizer.isAvailable else {
@@ -48,10 +52,8 @@ final class SpeechRecognitionService: ObservableObject {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.taskHint = .dictation
-
-        if speechRecognizer.supportsOnDeviceRecognition {
-            request.requiresOnDeviceRecognition = true
-        }
+        // Do NOT force on-device recognition — server-side is more reliable at
+        // detecting end-of-speech and marking results as final.
 
         recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor [weak self] in
@@ -59,21 +61,25 @@ final class SpeechRecognitionService: ObservableObject {
 
                 if let result {
                     self.transcribedText = result.bestTranscription.formattedString
+                    // New speech came in — reset the silence countdown
+                    self.resetSilenceTimer()
                 }
 
-                // Task is done on final result or error (errors from cancellation are expected)
                 let isCancellation = (error as? NSError).map {
                     $0.code == 301 || $0.code == 203
                 } ?? false
 
-                if result?.isFinal == true || (error != nil && !isCancellation) {
-                    if let error, !isCancellation {
-                        self.errorMessage = error.localizedDescription
-                    }
+                if result?.isFinal == true {
+                    self.cancelSilenceTimer()
+                    self.recognitionTask = nil
+                    self.isRecording = false
+                } else if let error, !isCancellation {
+                    self.cancelSilenceTimer()
+                    self.errorMessage = error.localizedDescription
                     self.recognitionTask = nil
                     self.isRecording = false
                 } else if error != nil && isCancellation {
-                    // Normal cancellation — just stop without showing error
+                    self.cancelSilenceTimer()
                     self.recognitionTask = nil
                     self.isRecording = false
                 }
@@ -93,17 +99,16 @@ final class SpeechRecognitionService: ObservableObject {
         recognitionRequest = request
         transcribedText = ""
         isRecording = true
+
+        // Start the initial silence timer — if the user never speaks, stop after timeout
+        resetSilenceTimer()
     }
 
-    /// Signals end of audio. The recognition task will deliver a final result
-    /// and set isRecording = false once it's done.
     func stopRecording() {
+        cancelSilenceTimer()
         cleanupAudioEngine()
-        // End audio input so the recognizer can finalise the transcription.
-        // Do NOT cancel the task — let it complete naturally.
         recognitionRequest?.endAudio()
         recognitionRequest = nil
-        // If there's no task (never started or already done) set isRecording = false now.
         if recognitionTask == nil {
             isRecording = false
         }
@@ -112,6 +117,22 @@ final class SpeechRecognitionService: ObservableObject {
     func resetTranscription() {
         transcribedText = ""
         errorMessage = nil
+    }
+
+    // MARK: - Silence detection
+
+    private func resetSilenceTimer() {
+        silenceTimer?.invalidate()
+        silenceTimer = Timer.scheduledTimer(withTimeInterval: silenceTimeout, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.stopRecording()
+            }
+        }
+    }
+
+    private func cancelSilenceTimer() {
+        silenceTimer?.invalidate()
+        silenceTimer = nil
     }
 
     // MARK: - Private helpers
