@@ -30,7 +30,9 @@ final class SpeechRecognitionService: ObservableObject {
     }
 
     func startRecording() throws {
-        stopRecording()
+        // Clean up any previous session
+        cleanupAudioEngine()
+        cleanupTask()
         errorMessage = nil
 
         guard let speechRecognizer, speechRecognizer.isAvailable else {
@@ -59,13 +61,21 @@ final class SpeechRecognitionService: ObservableObject {
                     self.transcribedText = result.bestTranscription.formattedString
                 }
 
-                if let error {
-                    self.errorMessage = error.localizedDescription
-                    self.stopRecording()
-                }
+                // Task is done on final result or error (errors from cancellation are expected)
+                let isCancellation = (error as? NSError).map {
+                    $0.code == 301 || $0.code == 203
+                } ?? false
 
-                if result?.isFinal == true {
-                    self.stopRecording()
+                if result?.isFinal == true || (error != nil && !isCancellation) {
+                    if let error, !isCancellation {
+                        self.errorMessage = error.localizedDescription
+                    }
+                    self.recognitionTask = nil
+                    self.isRecording = false
+                } else if error != nil && isCancellation {
+                    // Normal cancellation — just stop without showing error
+                    self.recognitionTask = nil
+                    self.isRecording = false
                 }
             }
         }
@@ -81,24 +91,39 @@ final class SpeechRecognitionService: ObservableObject {
 
         audioEngine = engine
         recognitionRequest = request
-        isRecording = true
         transcribedText = ""
+        isRecording = true
     }
 
+    /// Signals end of audio. The recognition task will deliver a final result
+    /// and set isRecording = false once it's done.
     func stopRecording() {
-        audioEngine?.stop()
-        audioEngine?.inputNode.removeTap(onBus: 0)
+        cleanupAudioEngine()
+        // End audio input so the recognizer can finalise the transcription.
+        // Do NOT cancel the task — let it complete naturally.
         recognitionRequest?.endAudio()
-        recognitionTask?.cancel()
-
-        audioEngine = nil
         recognitionRequest = nil
-        recognitionTask = nil
-        isRecording = false
+        // If there's no task (never started or already done) set isRecording = false now.
+        if recognitionTask == nil {
+            isRecording = false
+        }
     }
 
     func resetTranscription() {
         transcribedText = ""
         errorMessage = nil
+    }
+
+    // MARK: - Private helpers
+
+    private func cleanupAudioEngine() {
+        audioEngine?.stop()
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine = nil
+    }
+
+    private func cleanupTask() {
+        recognitionTask?.cancel()
+        recognitionTask = nil
     }
 }

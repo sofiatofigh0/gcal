@@ -7,6 +7,8 @@ final class ReminderService {
 
     private init() {}
 
+    // MARK: - Authorization
+
     func requestAccess() async -> Bool {
         if #available(iOS 17.0, *) {
             do {
@@ -22,6 +24,44 @@ final class ReminderService {
             }
         }
     }
+
+    func requestCalendarAccess() async -> Bool {
+        if #available(iOS 17.0, *) {
+            do {
+                return try await eventStore.requestFullAccessToEvents()
+            } catch {
+                return false
+            }
+        } else {
+            return await withCheckedContinuation { continuation in
+                eventStore.requestAccess(to: .event) { granted, _ in
+                    continuation.resume(returning: granted)
+                }
+            }
+        }
+    }
+
+    // MARK: - Calendar Events (iOS Calendar app)
+
+    func createCalendarEvent(from task: VoiceTask) async throws -> String {
+        let event = EKEvent(eventStore: eventStore)
+        event.title = task.title
+        event.notes = task.notes ?? "Created by Voice Calendar Reminders"
+        event.startDate = task.date
+        event.endDate = task.endDate ?? task.date.addingTimeInterval(3600)
+        event.isAllDay = task.isAllDay
+        event.calendar = eventStore.defaultCalendarForNewEvents
+
+        if task.hasAlarm {
+            let alarm = EKAlarm(relativeOffset: task.alarmOffset)
+            event.addAlarm(alarm)
+        }
+
+        try eventStore.save(event, span: .thisEvent)
+        return event.calendarItemIdentifier
+    }
+
+    // MARK: - Reminders (iOS Reminders app)
 
     func createReminder(from task: VoiceTask) async throws -> String {
         let reminder = EKReminder(eventStore: eventStore)
@@ -61,23 +101,5 @@ final class ReminderService {
         if let reminder = foundReminder {
             try eventStore.remove(reminder, commit: true)
         }
-    }
-
-    func createCalendarEvent(from task: VoiceTask) async throws -> String {
-        let event = EKEvent(eventStore: eventStore)
-        event.title = task.title
-        event.notes = task.notes ?? "Created by Voice Calendar Reminders"
-        event.startDate = task.date
-        event.endDate = task.endDate ?? task.date.addingTimeInterval(3600)
-        event.isAllDay = task.isAllDay
-        event.calendar = eventStore.defaultCalendarForNewEvents
-
-        if task.hasAlarm {
-            let alarm = EKAlarm(relativeOffset: task.alarmOffset)
-            event.addAlarm(alarm)
-        }
-
-        try eventStore.save(event, span: .thisEvent)
-        return event.calendarItemIdentifier
     }
 }

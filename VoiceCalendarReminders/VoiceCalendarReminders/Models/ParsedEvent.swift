@@ -28,12 +28,14 @@ struct ParsedEvent {
     }
 
     func toVoiceTask(rawTranscription: String) -> VoiceTask? {
-        guard !title.isEmpty, let date = date else { return nil }
+        guard !title.isEmpty else { return nil }
+        // Default to 1 hour from now if no date was detected
+        let eventDate = date ?? Date().addingTimeInterval(3600)
         return VoiceTask(
             title: title,
             notes: notes,
-            date: date,
-            endDate: endDate ?? date.addingTimeInterval(3600),
+            date: eventDate,
+            endDate: endDate ?? eventDate.addingTimeInterval(3600),
             hasAlarm: hasAlarm,
             alarmOffset: alarmOffset,
             isAllDay: isAllDay,

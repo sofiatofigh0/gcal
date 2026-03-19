@@ -14,6 +14,7 @@ struct VoiceTask: Identifiable, Codable, Equatable {
 
     var googleCalendarEventId: String?
     var reminderIdentifier: String?
+    var calendarEventIdentifier: String?
     var alarmNotificationId: String?
 
     enum TaskStatus: String, Codable {
