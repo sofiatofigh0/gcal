@@ -9,7 +9,6 @@ struct VoiceCalendarRemindersApp: App {
             ContentView()
                 .environmentObject(appState)
                 .onAppear {
-                    appState.configureNotifications()
                     appState.requestPermissions()
                 }
         }
@@ -23,10 +22,6 @@ final class AppState: ObservableObject {
 
     private let reminderService = ReminderService.shared
     private let alarmService = AlarmService.shared
-
-    func configureNotifications() {
-        alarmService.configure()
-    }
 
     func requestPermissions() {
         Task {

@@ -104,16 +104,12 @@ struct TaskRow: View {
                 Text(task.formattedDate)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-
-                Text(destinationLabel)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(task.destination == .reminderOnly ? .green : .indigo)
             }
 
             Spacer()
 
             HStack(spacing: 8) {
-                if task.hasAlarm && task.hasExplicitDate {
+                if task.hasAlarm {
                     Image(systemName: "alarm.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
@@ -133,15 +129,6 @@ struct TaskRow: View {
             }
         }
         .padding(.vertical, 4)
-    }
-
-    private var destinationLabel: String {
-        switch task.destination {
-        case .calendarAndReminder:
-            return "Calendar + Reminders"
-        case .reminderOnly:
-            return "Reminders"
-        }
     }
 
     private var statusIcon: some View {

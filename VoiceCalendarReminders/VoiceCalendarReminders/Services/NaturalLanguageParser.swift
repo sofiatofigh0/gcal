@@ -44,39 +44,14 @@ final class NaturalLanguageParser {
         event.hasAlarm = detectAlarmRequest(lowered)
         event.alarmOffset = extractAlarmOffset(lowered)
         event.isAllDay = detectAllDay(lowered)
-        event.destination = determineDestination(for: lowered, hasDate: event.date != nil)
-        event.title = extractTitle(from: text)
+
+        event.title = extractTitle(from: text, dates: dates)
 
         if event.title.isEmpty {
             return nil
         }
 
-        if event.destination == .calendarAndReminder, event.date == nil {
-            return nil
-        }
-
         return event
-    }
-
-    private func determineDestination(for text: String, hasDate: Bool) -> TaskDestination {
-        let reminderOnlyKeywords = [
-            "remind me",
-            "remember to",
-            "todo",
-            "to do",
-            "task",
-            "buy ",
-            "pick up",
-            "call ",
-            "text ",
-            "email "
-        ]
-
-        if reminderOnlyKeywords.contains(where: { text.contains($0) }) && !hasDate {
-            return .reminderOnly
-        }
-
-        return .calendarAndReminder
     }
 
     private func extractDates(from text: String) -> [Date] {
@@ -117,7 +92,7 @@ final class NaturalLanguageParser {
         let dayNames = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
         for (index, dayName) in dayNames.enumerated() {
             if lowered.contains(dayName) {
-                let targetWeekday = index + 2
+                let targetWeekday = index + 2 // Calendar weekday: Sunday=1, Monday=2, ...
                 let currentWeekday = calendar.component(.weekday, from: now)
                 var daysAhead = targetWeekday - currentWeekday
                 if daysAhead <= 0 { daysAhead += 7 }
@@ -136,8 +111,20 @@ final class NaturalLanguageParser {
     }
 
     private func extractTimeOrDefault(from text: String, on date: Date) -> Date {
+        let timePatterns: [(String, Int, Int)] = [
+            ("\\b(\\d{1,2})\\s*(?::|\\.)\\s*(\\d{2})\\s*(am|pm)\\b", 0, 0),
+            ("\\b(\\d{1,2})\\s*(am|pm)\\b", 0, 0),
+            ("\\bmidnight\\b", 0, 0),
+            ("\\bnoon\\b", 12, 0),
+            ("\\bmorning\\b", 9, 0),
+            ("\\bafternoon\\b", 14, 0),
+            ("\\bevening\\b", 18, 0),
+            ("\\bnight\\b", 20, 0),
+        ]
+
         let lowered = text.lowercased()
 
+        // Try HH:MM AM/PM
         if let regex = try? NSRegularExpression(pattern: "\\b(\\d{1,2})\\s*(?::|\\.)\\s*(\\d{2})\\s*(am|pm)\\b", options: .caseInsensitive) {
             let range = NSRange(lowered.startIndex..., in: lowered)
             if let match = regex.firstMatch(in: lowered, range: range) {
@@ -154,6 +141,7 @@ final class NaturalLanguageParser {
             }
         }
 
+        // Try H AM/PM
         if let regex = try? NSRegularExpression(pattern: "\\b(\\d{1,2})\\s*(am|pm)\\b", options: .caseInsensitive) {
             let range = NSRange(lowered.startIndex..., in: lowered)
             if let match = regex.firstMatch(in: lowered, range: range) {
@@ -165,6 +153,13 @@ final class NaturalLanguageParser {
                     if period == "am" && hour == 12 { hour = 0 }
                     return calendar.date(bySettingHour: hour, minute: 0, second: 0, of: date) ?? date
                 }
+            }
+        }
+
+        // Named times
+        for (pattern, hour, minute) in timePatterns where hour > 0 || pattern.contains("midnight") {
+            if lowered.contains(pattern.replacingOccurrences(of: "\\b", with: "").replacingOccurrences(of: "\\b", with: "")) {
+                return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: date) ?? date
             }
         }
 
@@ -227,7 +222,7 @@ final class NaturalLanguageParser {
             }
         }
 
-        return -900
+        return -900 // Default: 15 minutes before
     }
 
     private func detectAllDay(_ text: String) -> Bool {
@@ -235,13 +230,12 @@ final class NaturalLanguageParser {
         return allDayKeywords.contains { text.contains($0) }
     }
 
-    private func extractTitle(from text: String) -> String {
+    private func extractTitle(from text: String, dates: [Date]) -> String {
         var title = text
 
         let removalPatterns = [
             "\\b(?:set an? )?(?:alarm|alert|reminder|notification)\\s*(?:for)?\\b",
             "\\b(?:remind me (?:to|about))\\b",
-            "\\b(?:remember to)\\b",
             "\\b(?:at|on|for)\\s+\\d{1,2}\\s*(?::|\\.)\\s*\\d{2}\\s*(?:am|pm)\\b",
             "\\b(?:at|on|for)\\s+\\d{1,2}\\s*(?:am|pm)\\b",
             "\\b(?:today|tomorrow|tonight)\\b",
@@ -255,7 +249,7 @@ final class NaturalLanguageParser {
             "\\bI have to\\b",
             "\\bI want to\\b",
             "\\bI have\\b",
-            "\\bI need\\b"
+            "\\bI need\\b",
         ]
 
         for pattern in removalPatterns {
