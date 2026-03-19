@@ -9,32 +9,40 @@ final class SpeechRecognitionService: ObservableObject {
     @Published var isRecording = false
     @Published var transcribedText = ""
     @Published var isAuthorized = false
-    @Published var errorMessage: String?
 
     private var audioEngine: AVAudioEngine?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    private var silenceTimer: Timer?
+    private let silenceTimeout: TimeInterval = 2.5
+
+    var onAutoStop: (() -> Void)?
 
     private init() {}
 
     func requestAuthorization() async -> Bool {
-        await withCheckedContinuation { continuation in
+        let speechGranted = await withCheckedContinuation { continuation in
             SFSpeechRecognizer.requestAuthorization { status in
-                Task { @MainActor in
-                    self.isAuthorized = (status == .authorized)
-                    continuation.resume(returning: status == .authorized)
-                }
+                continuation.resume(returning: status == .authorized)
             }
         }
+
+        let micGranted = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                continuation.resume(returning: granted)
+            }
+        }
+
+        let authorized = speechGranted && micGranted
+        self.isAuthorized = authorized
+        return authorized
     }
 
     func startRecording() throws {
         stopRecording()
-        errorMessage = nil
 
         guard let speechRecognizer, speechRecognizer.isAvailable else {
-            errorMessage = "Speech recognizer is not available."
             return
         }
 
@@ -57,15 +65,21 @@ final class SpeechRecognitionService: ObservableObject {
 
                 if let result {
                     self.transcribedText = result.bestTranscription.formattedString
+                    self.resetSilenceTimer()
                 }
 
                 if let error {
-                    self.errorMessage = error.localizedDescription
-                    self.stopRecording()
+                    let nsError = error as NSError
+                    let isCancellation = nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 216
+                    let isInterrupted = nsError.code == 1110
+                    if !isCancellation && !isInterrupted {
+                        self.stopRecording()
+                    }
                 }
 
                 if result?.isFinal == true {
                     self.stopRecording()
+                    self.onAutoStop?()
                 }
             }
         }
@@ -83,9 +97,26 @@ final class SpeechRecognitionService: ObservableObject {
         recognitionRequest = request
         isRecording = true
         transcribedText = ""
+
+        resetSilenceTimer()
+    }
+
+    private func resetSilenceTimer() {
+        silenceTimer?.invalidate()
+        guard isRecording else { return }
+        silenceTimer = Timer.scheduledTimer(withTimeInterval: silenceTimeout, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isRecording, !self.transcribedText.isEmpty else { return }
+                self.stopRecording()
+                self.onAutoStop?()
+            }
+        }
     }
 
     func stopRecording() {
+        silenceTimer?.invalidate()
+        silenceTimer = nil
+
         audioEngine?.stop()
         audioEngine?.inputNode.removeTap(onBus: 0)
         recognitionRequest?.endAudio()
@@ -99,6 +130,5 @@ final class SpeechRecognitionService: ObservableObject {
 
     func resetTranscription() {
         transcribedText = ""
-        errorMessage = nil
     }
 }

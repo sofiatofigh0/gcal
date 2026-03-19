@@ -131,11 +131,22 @@ struct SettingsView: View {
     }
 }
 
+private class AuthPresentationContext: NSObject, ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = scene.windows.first else {
+            return ASPresentationAnchor()
+        }
+        return window
+    }
+}
+
 struct GoogleAuthView: View {
     @ObservedObject private var googleCalendar = GoogleCalendarService.shared
     @Environment(\.dismiss) private var dismiss
     @State private var isLoading = false
     @State private var error: String?
+    private let contextProvider = AuthPresentationContext()
 
     var body: some View {
         NavigationStack {
@@ -232,7 +243,7 @@ struct GoogleAuthView: View {
         }
 
         session.prefersEphemeralWebBrowserSession = false
-        session.presentationContextProvider = nil // Uses the key window
+        session.presentationContextProvider = contextProvider
         session.start()
     }
 }

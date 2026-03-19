@@ -8,6 +8,8 @@ final class VoiceInputViewModel: ObservableObject {
     @Published var statusMessage = ""
     @Published var showError = false
     @Published var errorMessage = ""
+    @Published var isRecording = false
+    @Published var transcribedText = ""
 
     let speechService = SpeechRecognitionService.shared
     private let parser = NaturalLanguageParser.shared
@@ -16,16 +18,34 @@ final class VoiceInputViewModel: ObservableObject {
     private let alarmService = AlarmService.shared
     private let persistence = TaskPersistenceService.shared
 
-    var isRecording: Bool { speechService.isRecording }
-    var transcribedText: String { speechService.transcribedText }
+    init() {
+        speechService.$isRecording
+            .receive(on: RunLoop.main)
+            .assign(to: &$isRecording)
+
+        speechService.$transcribedText
+            .receive(on: RunLoop.main)
+            .assign(to: &$transcribedText)
+
+        speechService.onAutoStop = { [weak self] in
+            self?.processTranscription()
+        }
+    }
 
     func toggleRecording() {
         if speechService.isRecording {
             speechService.stopRecording()
             processTranscription()
         } else {
+            parsedEvents = []
+            statusMessage = ""
             Task {
-                _ = await speechService.requestAuthorization()
+                let authorized = await speechService.requestAuthorization()
+                guard authorized else {
+                    errorMessage = "Microphone or Speech Recognition permission denied. Enable them in Settings > Privacy."
+                    showError = true
+                    return
+                }
                 do {
                     try speechService.startRecording()
                 } catch {
@@ -37,8 +57,8 @@ final class VoiceInputViewModel: ObservableObject {
     }
 
     func processTranscription() {
-        guard !speechService.transcribedText.isEmpty else { return }
-        parsedEvents = parser.parse(speechService.transcribedText)
+        guard !transcribedText.isEmpty else { return }
+        parsedEvents = parser.parse(transcribedText)
 
         if parsedEvents.isEmpty {
             statusMessage = "Couldn't understand the events. Please try again."
@@ -54,44 +74,76 @@ final class VoiceInputViewModel: ObservableObject {
 
         var tasks = persistence.loadTasks()
         var successCount = 0
-        var failureCount = 0
+        var failCount = 0
+        var firstError: String?
 
         for event in parsedEvents {
-            guard var task = event.toVoiceTask(rawTranscription: speechService.transcribedText) else {
-                failureCount += 1
+            guard var task = event.toVoiceTask(rawTranscription: transcribedText) else {
+                failCount += 1
                 continue
             }
 
-            do {
-                if googleCalendar.isSignedIn {
+            var didSomething = false
+
+            // Google Calendar
+            if googleCalendar.isSignedIn {
+                do {
                     let eventId = try await googleCalendar.createEvent(task: task)
                     task.googleCalendarEventId = eventId
+                    didSomething = true
+                } catch {
+                    if firstError == nil { firstError = "Google Calendar failed" }
                 }
+            }
 
+            // iPhone Calendar via EventKit
+            do {
+                let calEventId = try await reminderService.createCalendarEvent(from: task)
+                task.calendarEventIdentifier = calEventId
+                didSomething = true
+            } catch {
+                if firstError == nil { firstError = error.localizedDescription }
+            }
+
+            // iPhone Reminders
+            do {
                 let reminderId = try await reminderService.createReminder(from: task)
                 task.reminderIdentifier = reminderId
-
-                if task.hasAlarm {
-                    let alarmId = try await alarmService.scheduleAlarm(for: task)
-                    task.alarmNotificationId = alarmId
-                }
-
-                task.status = .synced
-                tasks.append(task)
-                successCount += 1
+                didSomething = true
             } catch {
-                task.status = .failed
-                tasks.append(task)
-                failureCount += 1
+                if firstError == nil { firstError = error.localizedDescription }
             }
+
+            // In-app alarm + local notification (always scheduled, works independently)
+            do {
+                let alarmId = try await alarmService.scheduleAlarm(for: task)
+                task.alarmNotificationId = alarmId
+                didSomething = true
+            } catch {
+                if firstError == nil { firstError = error.localizedDescription }
+            }
+
+            if didSomething {
+                task.status = .synced
+                successCount += 1
+            } else {
+                task.status = .failed
+                failCount += 1
+            }
+
+            tasks.append(task)
         }
 
         persistence.saveTasks(tasks)
 
-        if failureCount == 0 {
+        if failCount == 0 && successCount > 0 {
             statusMessage = "Successfully added \(successCount) event\(successCount == 1 ? "" : "s")!"
+        } else if successCount > 0 {
+            statusMessage = "Added \(successCount), \(failCount) failed."
+        } else if let firstError {
+            statusMessage = "Could not save: \(firstError)"
         } else {
-            statusMessage = "Added \(successCount), failed \(failureCount)."
+            statusMessage = "Could not save events. Check permissions in Settings."
         }
 
         parsedEvents = []

@@ -68,7 +68,7 @@ struct VoiceInputView: View {
                     .foregroundStyle(.white)
             }
         }
-        .onChange(of: viewModel.isRecording) { _, newValue in
+        .onChange(of: viewModel.isRecording) { newValue in
             pulseAnimation = newValue
         }
     }
@@ -213,19 +213,19 @@ struct ParsedEventCard: View {
                 TextField("Event title", text: $editingTitle)
                     .textFieldStyle(.roundedBorder)
                     .onAppear { editingTitle = event.title }
-                    .onChange(of: editingTitle) { _, newValue in
+                    .onChange(of: editingTitle) { newValue in
                         onUpdate(newValue, nil, nil)
                     }
 
                 DatePicker("Date & Time", selection: $editingDate)
                     .onAppear { editingDate = event.date ?? Date() }
-                    .onChange(of: editingDate) { _, newValue in
+                    .onChange(of: editingDate) { newValue in
                         onUpdate(nil, newValue, nil)
                     }
 
                 Toggle("Set Alarm", isOn: $editingAlarm)
                     .onAppear { editingAlarm = event.hasAlarm }
-                    .onChange(of: editingAlarm) { _, newValue in
+                    .onChange(of: editingAlarm) { newValue in
                         onUpdate(nil, nil, newValue)
                     }
             }
