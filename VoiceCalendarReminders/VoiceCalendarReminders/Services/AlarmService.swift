@@ -1,5 +1,6 @@
 import Foundation
 import UserNotifications
+import UIKit
 
 final class AlarmService: NSObject, UNUserNotificationCenterDelegate {
     static let shared = AlarmService()
@@ -58,7 +59,7 @@ final class AlarmService: NSObject, UNUserNotificationCenterDelegate {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        content.sound = .default
+        content.sound = AlarmSoundManager.shared.notificationSound()
         content.categoryIdentifier = "TASK_ALARM"
         content.userInfo = ["taskId": task.id.uuidString]
 
@@ -118,6 +119,7 @@ final class AlarmService: NSObject, UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         completionHandler([.banner, .sound, .badge])
+        AlarmSoundManager.shared.triggerHaptic()
     }
 
     // Handle snooze/dismiss actions
@@ -131,7 +133,7 @@ final class AlarmService: NSObject, UNUserNotificationCenterDelegate {
             let snoozeContent = UNMutableNotificationContent()
             snoozeContent.title = content.title
             snoozeContent.body = content.body
-            snoozeContent.sound = .default
+            snoozeContent.sound = AlarmSoundManager.shared.notificationSound()
             snoozeContent.categoryIdentifier = "TASK_ALARM"
 
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 600, repeats: false)

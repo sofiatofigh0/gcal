@@ -6,11 +6,13 @@ struct SettingsView: View {
     @State private var showGoogleAuth = false
     @State private var showSignOutConfirmation = false
     @State private var defaultAlarmMinutes = 15
+    @State private var selectedSound: AlarmSound = AlarmSoundManager.shared.selectedSound
 
     var body: some View {
         NavigationStack {
             List {
                 googleAccountSection
+                alarmSoundSection
                 defaultsSection
                 aboutSection
             }
@@ -86,6 +88,50 @@ struct SettingsView: View {
             Text("Google Account")
         } footer: {
             Text("Connect your Google account to automatically add voice events to Google Calendar.")
+        }
+    }
+
+    private var alarmSoundSection: some View {
+        Section {
+            ForEach(AlarmSound.allCases) { sound in
+                Button(action: {
+                    selectedSound = sound
+                    AlarmSoundManager.shared.selectedSound = sound
+                    AlarmSoundManager.shared.previewSound(sound)
+                }) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(sound.rawValue)
+                                .foregroundStyle(.primary)
+                            Text(soundDescription(sound))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        if selectedSound == sound {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.indigo)
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Alarm Sound")
+        } footer: {
+            Text("Tap a sound to preview it and set it as your alarm tone. This plays when your event notification fires.")
+        }
+    }
+
+    private func soundDescription(_ sound: AlarmSound) -> String {
+        switch sound {
+        case .radar: return "Fast repeating beeps"
+        case .beacon: return "Slow, steady pulse"
+        case .pulse: return "Heartbeat rhythm"
+        case .chime: return "Ascending notes"
+        case .alert: return "Urgent warbling tone"
+        case .system: return "iPhone default notification sound"
         }
     }
 

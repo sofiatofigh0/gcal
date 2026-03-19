@@ -24,10 +24,12 @@ final class AppState: ObservableObject {
     private let alarmService = AlarmService.shared
 
     func requestPermissions() {
+        AlarmSoundManager.shared.generateAllSounds()
+
         Task {
             let remindersGranted = await reminderService.requestAccess()
             let notificationsGranted = await alarmService.requestAuthorization()
-            permissionsGranted = remindersGranted && notificationsGranted
+            permissionsGranted = remindersGranted || notificationsGranted
         }
     }
 }
