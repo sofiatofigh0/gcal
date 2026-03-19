@@ -7,34 +7,70 @@ final class ReminderService {
 
     private init() {}
 
+    // MARK: - Authorization
+
     func requestAccess() async -> Bool {
-        let remindersGranted: Bool
-        let calendarGranted: Bool
-
-        if #available(iOS 17.0, *) {
-            remindersGranted = (try? await eventStore.requestFullAccessToReminders()) ?? false
-            calendarGranted = (try? await eventStore.requestFullAccessToEvents()) ?? false
-        } else {
-            remindersGranted = await withCheckedContinuation { continuation in
-                eventStore.requestAccess(to: .reminder) { granted, _ in
-                    continuation.resume(returning: granted)
-                }
-            }
-            calendarGranted = await withCheckedContinuation { continuation in
-                eventStore.requestAccess(to: .event) { granted, _ in
-                    continuation.resume(returning: granted)
-                }
-            }
-        }
-
-        return remindersGranted && calendarGranted
+        let remindersGranted = await requestRemindersAccess()
+        let calendarGranted = await requestCalendarAccess()
+        return remindersGranted || calendarGranted
     }
 
-    func createReminder(from task: VoiceTask) throws -> String {
+    private func requestRemindersAccess() async -> Bool {
+        let status = EKEventStore.authorizationStatus(for: .reminder)
+        switch status {
+        case .authorized, .fullAccess:
+            return true
+        case .notDetermined:
+            if #available(iOS 17.0, *) {
+                return (try? await eventStore.requestFullAccessToReminders()) ?? false
+            } else {
+                return await withCheckedContinuation { continuation in
+                    eventStore.requestAccess(to: .reminder) { granted, _ in
+                        continuation.resume(returning: granted)
+                    }
+                }
+            }
+        default:
+            return false
+        }
+    }
+
+    private func requestCalendarAccess() async -> Bool {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        switch status {
+        case .authorized, .fullAccess:
+            return true
+        case .notDetermined:
+            if #available(iOS 17.0, *) {
+                return (try? await eventStore.requestFullAccessToEvents()) ?? false
+            } else {
+                return await withCheckedContinuation { continuation in
+                    eventStore.requestAccess(to: .event) { granted, _ in
+                        continuation.resume(returning: granted)
+                    }
+                }
+            }
+        default:
+            return false
+        }
+    }
+
+    // MARK: - Reminders
+
+    func createReminder(from task: VoiceTask) async throws -> String {
+        let hasAccess = await requestRemindersAccess()
+        guard hasAccess else {
+            throw EventKitError.noRemindersAccess
+        }
+
+        guard let calendar = eventStore.defaultCalendarForNewReminders() else {
+            throw EventKitError.noDefaultCalendar
+        }
+
         let reminder = EKReminder(eventStore: eventStore)
         reminder.title = task.title
         reminder.notes = task.notes ?? "Created by Voice Calendar Reminders"
-        reminder.calendar = eventStore.defaultCalendarForNewReminders()
+        reminder.calendar = calendar
 
         let components = Calendar.current.dateComponents(
             [.year, .month, .day, .hour, .minute],
@@ -42,37 +78,43 @@ final class ReminderService {
         )
         reminder.dueDateComponents = components
 
-        // Always add an alarm at the time of the event
         let atTimeAlarm = EKAlarm(relativeOffset: 0)
         reminder.addAlarm(atTimeAlarm)
 
-        // Add an earlier alarm if the user asked for one with a custom offset
         if task.hasAlarm && task.alarmOffset < 0 {
             let earlyAlarm = EKAlarm(relativeOffset: task.alarmOffset)
             reminder.addAlarm(earlyAlarm)
         }
 
-        // High priority triggers a more prominent notification
         reminder.priority = Int(EKReminderPriority.high.rawValue)
 
         try eventStore.save(reminder, commit: true)
         return reminder.calendarItemIdentifier
     }
 
-    func createCalendarEvent(from task: VoiceTask) throws -> String {
+    // MARK: - Calendar Events
+
+    func createCalendarEvent(from task: VoiceTask) async throws -> String {
+        let hasAccess = await requestCalendarAccess()
+        guard hasAccess else {
+            throw EventKitError.noCalendarAccess
+        }
+
+        guard let calendar = eventStore.defaultCalendarForNewEvents else {
+            throw EventKitError.noDefaultCalendar
+        }
+
         let event = EKEvent(eventStore: eventStore)
         event.title = task.title
         event.notes = task.notes ?? "Created by Voice Calendar Reminders"
         event.startDate = task.date
         event.endDate = task.endDate ?? task.date.addingTimeInterval(3600)
         event.isAllDay = task.isAllDay
-        event.calendar = eventStore.defaultCalendarForNewEvents
+        event.calendar = calendar
 
-        // Always add an alert at the time of the event
         let atTimeAlarm = EKAlarm(relativeOffset: 0)
         event.addAlarm(atTimeAlarm)
 
-        // Add an earlier alert if the user asked for one with a custom offset
         if task.hasAlarm && task.alarmOffset < 0 {
             let earlyAlarm = EKAlarm(relativeOffset: task.alarmOffset)
             event.addAlarm(earlyAlarm)
@@ -81,6 +123,8 @@ final class ReminderService {
         try eventStore.save(event, span: .thisEvent)
         return event.calendarItemIdentifier
     }
+
+    // MARK: - Deletion
 
     func deleteReminder(identifier: String) throws {
         let predicate = eventStore.predicateForReminders(in: nil)
@@ -102,5 +146,24 @@ final class ReminderService {
     func deleteCalendarEvent(identifier: String) {
         guard let event = eventStore.calendarItem(withIdentifier: identifier) as? EKEvent else { return }
         try? eventStore.remove(event, span: .thisEvent)
+    }
+
+    // MARK: - Errors
+
+    enum EventKitError: LocalizedError {
+        case noRemindersAccess
+        case noCalendarAccess
+        case noDefaultCalendar
+
+        var errorDescription: String? {
+            switch self {
+            case .noRemindersAccess:
+                return "No access to Reminders. Go to Settings > Privacy & Security > Reminders and enable this app."
+            case .noCalendarAccess:
+                return "No access to Calendar. Go to Settings > Privacy & Security > Calendars and enable this app."
+            case .noDefaultCalendar:
+                return "No default calendar found on this device."
+            }
+        }
     }
 }

@@ -17,7 +17,6 @@ struct VoiceCalendarRemindersApp: App {
 
 @MainActor
 final class AppState: ObservableObject {
-    @Published var isGoogleSignedIn = false
     @Published var permissionsGranted = false
 
     private let reminderService = ReminderService.shared
@@ -25,9 +24,9 @@ final class AppState: ObservableObject {
 
     func requestPermissions() {
         Task {
-            let remindersGranted = await reminderService.requestAccess()
+            let eventKitGranted = await reminderService.requestAccess()
             let notificationsGranted = await alarmService.requestAuthorization()
-            permissionsGranted = remindersGranted && notificationsGranted
+            permissionsGranted = eventKitGranted || notificationsGranted
         }
     }
 }
