@@ -104,11 +104,10 @@ final class VoiceInputViewModel: ObservableObject {
                 didSomething = true
             }
 
-            // Local notification alarm (backup)
-            if task.hasAlarm {
-                if let alarmId = try? await alarmService.scheduleAlarm(for: task) {
-                    task.alarmNotificationId = alarmId
-                }
+            // Local notification alarm — always scheduled, works when app is closed or phone is locked
+            if let alarmId = try? await alarmService.scheduleAlarm(for: task) {
+                task.alarmNotificationId = alarmId
+                didSomething = true
             }
 
             if didSomething {
