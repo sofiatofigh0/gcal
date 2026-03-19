@@ -9,7 +9,6 @@ final class SpeechRecognitionService: ObservableObject {
     @Published var isRecording = false
     @Published var transcribedText = ""
     @Published var isAuthorized = false
-    @Published var errorMessage: String?
 
     private var audioEngine: AVAudioEngine?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
@@ -30,7 +29,7 @@ final class SpeechRecognitionService: ObservableObject {
         }
 
         let micGranted = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-            AVAudioApplication.requestRecordPermission { granted in
+            AVAudioSession.sharedInstance().requestRecordPermission { granted in
                 continuation.resume(returning: granted)
             }
         }
@@ -42,10 +41,8 @@ final class SpeechRecognitionService: ObservableObject {
 
     func startRecording() throws {
         stopRecording()
-        errorMessage = nil
 
         guard let speechRecognizer, speechRecognizer.isAvailable else {
-            errorMessage = "Speech recognizer is not available."
             return
         }
 
@@ -72,8 +69,12 @@ final class SpeechRecognitionService: ObservableObject {
                 }
 
                 if let error {
-                    self.errorMessage = error.localizedDescription
-                    self.stopRecording()
+                    let nsError = error as NSError
+                    let isCancellation = nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 216
+                    let isInterrupted = nsError.code == 1110
+                    if !isCancellation && !isInterrupted {
+                        self.stopRecording()
+                    }
                 }
 
                 if result?.isFinal == true {
@@ -129,6 +130,5 @@ final class SpeechRecognitionService: ObservableObject {
 
     func resetTranscription() {
         transcribedText = ""
-        errorMessage = nil
     }
 }

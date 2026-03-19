@@ -42,12 +42,18 @@ final class ReminderService {
         )
         reminder.dueDateComponents = components
 
-        if task.hasAlarm {
-            let alarm = EKAlarm(relativeOffset: task.alarmOffset)
-            reminder.addAlarm(alarm)
+        // Always add an alarm at the time of the event
+        let atTimeAlarm = EKAlarm(relativeOffset: 0)
+        reminder.addAlarm(atTimeAlarm)
+
+        // Add an earlier alarm if the user asked for one with a custom offset
+        if task.hasAlarm && task.alarmOffset < 0 {
+            let earlyAlarm = EKAlarm(relativeOffset: task.alarmOffset)
+            reminder.addAlarm(earlyAlarm)
         }
 
-        reminder.priority = Int(EKReminderPriority.medium.rawValue)
+        // High priority triggers a more prominent notification
+        reminder.priority = Int(EKReminderPriority.high.rawValue)
 
         try eventStore.save(reminder, commit: true)
         return reminder.calendarItemIdentifier
@@ -62,9 +68,14 @@ final class ReminderService {
         event.isAllDay = task.isAllDay
         event.calendar = eventStore.defaultCalendarForNewEvents
 
-        if task.hasAlarm {
-            let alarm = EKAlarm(relativeOffset: task.alarmOffset)
-            event.addAlarm(alarm)
+        // Always add an alert at the time of the event
+        let atTimeAlarm = EKAlarm(relativeOffset: 0)
+        event.addAlarm(atTimeAlarm)
+
+        // Add an earlier alert if the user asked for one with a custom offset
+        if task.hasAlarm && task.alarmOffset < 0 {
+            let earlyAlarm = EKAlarm(relativeOffset: task.alarmOffset)
+            event.addAlarm(earlyAlarm)
         }
 
         try eventStore.save(event, span: .thisEvent)

@@ -17,7 +17,6 @@ final class VoiceInputViewModel: ObservableObject {
     private let reminderService = ReminderService.shared
     private let alarmService = AlarmService.shared
     private let persistence = TaskPersistenceService.shared
-    private var cancellables = Set<AnyCancellable>()
 
     init() {
         speechService.$isRecording
@@ -27,15 +26,6 @@ final class VoiceInputViewModel: ObservableObject {
         speechService.$transcribedText
             .receive(on: RunLoop.main)
             .assign(to: &$transcribedText)
-
-        speechService.$errorMessage
-            .compactMap { $0 }
-            .receive(on: RunLoop.main)
-            .sink { [weak self] message in
-                self?.errorMessage = message
-                self?.showError = true
-            }
-            .store(in: &cancellables)
 
         speechService.onAutoStop = { [weak self] in
             self?.processTranscription()
@@ -84,63 +74,49 @@ final class VoiceInputViewModel: ObservableObject {
 
         var tasks = persistence.loadTasks()
         var successCount = 0
-        var errors: [String] = []
+        var failCount = 0
 
         for event in parsedEvents {
             guard var task = event.toVoiceTask(rawTranscription: transcribedText) else {
-                errors.append("Could not parse event.")
+                failCount += 1
                 continue
             }
 
-            var taskErrors: [String] = []
+            var didSomething = false
 
-            // Google Calendar — independent, skip if not signed in
+            // Google Calendar
             if googleCalendar.isSignedIn {
-                do {
-                    let eventId = try await googleCalendar.createEvent(task: task)
+                if let eventId = try? await googleCalendar.createEvent(task: task) {
                     task.googleCalendarEventId = eventId
-                } catch {
-                    taskErrors.append("Google Calendar: \(error.localizedDescription)")
+                    didSomething = true
                 }
             }
 
-            // iPhone Calendar via EventKit — creates a native calendar event with alarm
-            do {
-                let calEventId = try reminderService.createCalendarEvent(from: task)
+            // iPhone Calendar via EventKit
+            if let calEventId = try? reminderService.createCalendarEvent(from: task) {
                 task.calendarEventIdentifier = calEventId
-            } catch {
-                taskErrors.append("Calendar: \(error.localizedDescription)")
+                didSomething = true
             }
 
             // iPhone Reminders
-            do {
-                let reminderId = try reminderService.createReminder(from: task)
+            if let reminderId = try? reminderService.createReminder(from: task) {
                 task.reminderIdentifier = reminderId
-            } catch {
-                taskErrors.append("Reminders: \(error.localizedDescription)")
+                didSomething = true
             }
 
-            // Local notification alarm (backup alarm)
+            // Local notification alarm (backup)
             if task.hasAlarm {
-                do {
-                    let alarmId = try await alarmService.scheduleAlarm(for: task)
+                if let alarmId = try? await alarmService.scheduleAlarm(for: task) {
                     task.alarmNotificationId = alarmId
-                } catch {
-                    taskErrors.append("Notification alarm: \(error.localizedDescription)")
                 }
             }
 
-            if taskErrors.isEmpty {
+            if didSomething {
                 task.status = .synced
                 successCount += 1
-            } else if task.calendarEventIdentifier != nil || task.reminderIdentifier != nil {
-                // Partial success — at least one integration worked
-                task.status = .synced
-                successCount += 1
-                errors.append(contentsOf: taskErrors)
             } else {
                 task.status = .failed
-                errors.append(contentsOf: taskErrors)
+                failCount += 1
             }
 
             tasks.append(task)
@@ -148,12 +124,12 @@ final class VoiceInputViewModel: ObservableObject {
 
         persistence.saveTasks(tasks)
 
-        if errors.isEmpty {
+        if failCount == 0 {
             statusMessage = "Successfully added \(successCount) event\(successCount == 1 ? "" : "s")!"
         } else if successCount > 0 {
-            statusMessage = "Added \(successCount) event\(successCount == 1 ? "" : "s"). Some issues: \(errors.joined(separator: "; "))"
+            statusMessage = "Added \(successCount) event\(successCount == 1 ? "" : "s"), \(failCount) could not be saved."
         } else {
-            statusMessage = "Failed: \(errors.joined(separator: "; "))"
+            statusMessage = "Could not save events. Check permissions in Settings."
         }
 
         parsedEvents = []
