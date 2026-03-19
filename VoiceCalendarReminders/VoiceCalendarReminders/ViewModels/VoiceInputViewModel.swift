@@ -9,6 +9,10 @@ final class VoiceInputViewModel: ObservableObject {
     @Published var showError = false
     @Published var errorMessage = ""
 
+    // Mirror SpeechRecognitionService state so the view re-renders on changes
+    @Published var isRecording = false
+    @Published var transcribedText = ""
+
     let speechService = SpeechRecognitionService.shared
     private let parser = NaturalLanguageParser.shared
     private let googleCalendar = GoogleCalendarService.shared
@@ -16,13 +20,36 @@ final class VoiceInputViewModel: ObservableObject {
     private let alarmService = AlarmService.shared
     private let persistence = TaskPersistenceService.shared
 
-    var isRecording: Bool { speechService.isRecording }
-    var transcribedText: String { speechService.transcribedText }
+    private var cancellables = Set<AnyCancellable>()
+
+    init() {
+        // Forward transcribed text updates so the view re-renders
+        speechService.$transcribedText
+            .receive(on: RunLoop.main)
+            .sink { [weak self] text in
+                self?.transcribedText = text
+            }
+            .store(in: &cancellables)
+
+        // When recording stops, automatically process the transcription
+        speechService.$isRecording
+            .receive(on: RunLoop.main)
+            .sink { [weak self] newValue in
+                guard let self else { return }
+                let wasRecording = self.isRecording
+                self.isRecording = newValue
+                if wasRecording && !newValue {
+                    self.processTranscription()
+                }
+            }
+            .store(in: &cancellables)
+    }
 
     func toggleRecording() {
         if speechService.isRecording {
+            // stopRecording() ends audio; the recognition task delivers the final
+            // result, sets isRecording = false, and our subscription calls processTranscription()
             speechService.stopRecording()
-            processTranscription()
         } else {
             Task {
                 _ = await speechService.requestAuthorization()
@@ -37,8 +64,9 @@ final class VoiceInputViewModel: ObservableObject {
     }
 
     func processTranscription() {
-        guard !speechService.transcribedText.isEmpty else { return }
-        parsedEvents = parser.parse(speechService.transcribedText)
+        let text = speechService.transcribedText
+        guard !text.isEmpty else { return }
+        parsedEvents = parser.parse(text)
 
         if parsedEvents.isEmpty {
             statusMessage = "Couldn't understand the events. Please try again."
@@ -63,14 +91,22 @@ final class VoiceInputViewModel: ObservableObject {
             }
 
             do {
+                // Google Calendar (optional — only if signed in)
                 if googleCalendar.isSignedIn {
                     let eventId = try await googleCalendar.createEvent(task: task)
                     task.googleCalendarEventId = eventId
                 }
 
+                // Native iOS Calendar event (always attempt)
+                if let calId = try? await reminderService.createCalendarEvent(from: task) {
+                    task.calendarEventIdentifier = calId
+                }
+
+                // iOS Reminders
                 let reminderId = try await reminderService.createReminder(from: task)
                 task.reminderIdentifier = reminderId
 
+                // Local alarm notification
                 if task.hasAlarm {
                     let alarmId = try await alarmService.scheduleAlarm(for: task)
                     task.alarmNotificationId = alarmId
