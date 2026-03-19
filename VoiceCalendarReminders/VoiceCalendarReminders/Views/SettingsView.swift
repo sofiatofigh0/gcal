@@ -108,6 +108,14 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Alarm behavior")
+                Text("Alarms now use iPhone local notifications, so they can alert while the app is open and while the phone is locked. iOS still respects the device's mute/focus settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
         }
     }
 
@@ -232,7 +240,7 @@ struct GoogleAuthView: View {
         }
 
         session.prefersEphemeralWebBrowserSession = false
-        session.presentationContextProvider = nil // Uses the key window
+        session.presentationContextProvider = nil
         session.start()
     }
 }

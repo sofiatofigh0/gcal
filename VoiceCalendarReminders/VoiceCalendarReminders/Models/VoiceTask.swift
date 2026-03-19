@@ -11,6 +11,8 @@ struct VoiceTask: Identifiable, Codable, Equatable {
     var isAllDay: Bool
     var rawTranscription: String
     var status: TaskStatus
+    var destination: TaskDestination
+    var hasExplicitDate: Bool
 
     var googleCalendarEventId: String?
     var reminderIdentifier: String?
@@ -29,10 +31,12 @@ struct VoiceTask: Identifiable, Codable, Equatable {
         date: Date,
         endDate: Date? = nil,
         hasAlarm: Bool = false,
-        alarmOffset: TimeInterval = -900, // 15 minutes before
+        alarmOffset: TimeInterval = -900,
         isAllDay: Bool = false,
         rawTranscription: String = "",
-        status: TaskStatus = .pending
+        status: TaskStatus = .pending,
+        destination: TaskDestination = .calendarAndReminder,
+        hasExplicitDate: Bool = true
     ) {
         self.id = id
         self.title = title
@@ -44,11 +48,17 @@ struct VoiceTask: Identifiable, Codable, Equatable {
         self.isAllDay = isAllDay
         self.rawTranscription = rawTranscription
         self.status = status
+        self.destination = destination
+        self.hasExplicitDate = hasExplicitDate
     }
 }
 
 extension VoiceTask {
     var formattedDate: String {
+        if destination == .reminderOnly && !hasExplicitDate {
+            return "No due date"
+        }
+
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = isAllDay ? .none : .short
@@ -66,5 +76,9 @@ extension VoiceTask {
             return "\(hours) hr before"
         }
         return "\(hours) hr \(remainingMinutes) min before"
+    }
+
+    var sortDate: Date {
+        hasExplicitDate ? date : .distantFuture
     }
 }
