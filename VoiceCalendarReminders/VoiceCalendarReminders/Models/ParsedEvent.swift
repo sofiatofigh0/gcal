@@ -1,10 +1,5 @@
 import Foundation
 
-enum TaskDestination: String, Codable {
-    case calendarAndReminder
-    case reminderOnly
-}
-
 struct ParsedEvent {
     var title: String
     var date: Date?
@@ -13,7 +8,6 @@ struct ParsedEvent {
     var alarmOffset: TimeInterval
     var isAllDay: Bool
     var notes: String?
-    var destination: TaskDestination
 
     init(
         title: String = "",
@@ -22,8 +16,7 @@ struct ParsedEvent {
         hasAlarm: Bool = false,
         alarmOffset: TimeInterval = -900,
         isAllDay: Bool = false,
-        notes: String? = nil,
-        destination: TaskDestination = .calendarAndReminder
+        notes: String? = nil
     ) {
         self.title = title
         self.date = date
@@ -32,29 +25,19 @@ struct ParsedEvent {
         self.alarmOffset = alarmOffset
         self.isAllDay = isAllDay
         self.notes = notes
-        self.destination = destination
-    }
-
-    var needsDatePrompt: Bool {
-        destination == .reminderOnly && date == nil
     }
 
     func toVoiceTask(rawTranscription: String) -> VoiceTask? {
-        guard !title.isEmpty else { return nil }
-
-        let effectiveDate = date ?? Date()
-
+        guard !title.isEmpty, let date = date else { return nil }
         return VoiceTask(
             title: title,
             notes: notes,
-            date: effectiveDate,
-            endDate: endDate ?? (date != nil ? effectiveDate.addingTimeInterval(3600) : nil),
+            date: date,
+            endDate: endDate ?? date.addingTimeInterval(3600),
             hasAlarm: hasAlarm,
             alarmOffset: alarmOffset,
             isAllDay: isAllDay,
-            rawTranscription: rawTranscription,
-            destination: destination,
-            hasExplicitDate: date != nil
+            rawTranscription: rawTranscription
         )
     }
 }
