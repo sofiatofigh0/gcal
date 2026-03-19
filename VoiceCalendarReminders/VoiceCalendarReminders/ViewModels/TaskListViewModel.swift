@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 @MainActor
 final class TaskListViewModel: ObservableObject {
@@ -15,18 +16,18 @@ final class TaskListViewModel: ObservableObject {
     var filteredTasks: [VoiceTask] {
         if let filterDate {
             return tasks.filter {
-                Calendar.current.isDate($0.date, inSameDayAs: filterDate)
+                $0.hasExplicitDate && Calendar.current.isDate($0.date, inSameDayAs: filterDate)
             }
         }
-        return tasks.sorted { $0.date < $1.date }
+        return tasks.sorted { $0.sortDate < $1.sortDate }
     }
 
     var upcomingTasks: [VoiceTask] {
-        tasks.filter { $0.date > Date() }.sorted { $0.date < $1.date }
+        tasks.filter { !$0.hasExplicitDate || $0.date > Date() }.sorted { $0.sortDate < $1.sortDate }
     }
 
     var pastTasks: [VoiceTask] {
-        tasks.filter { $0.date <= Date() }.sorted { $0.date > $1.date }
+        tasks.filter { $0.hasExplicitDate && $0.date <= Date() }.sorted { $0.date > $1.date }
     }
 
     func loadTasks() {

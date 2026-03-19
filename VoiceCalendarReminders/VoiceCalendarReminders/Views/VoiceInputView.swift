@@ -31,11 +31,11 @@ struct VoiceInputView: View {
                 .font(.system(size: 48))
                 .foregroundStyle(.indigo)
 
-            Text("Tap to speak your events")
+            Text("Tap to speak your events or reminders")
                 .font(.headline)
                 .foregroundStyle(.secondary)
 
-            Text("Say something like: \"Meeting with John tomorrow at 3pm, set an alarm\"")
+            Text("Try: \"Meeting with John tomorrow at 3pm, set an alarm\" or \"Remind me to buy milk\".")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
@@ -96,7 +96,7 @@ struct VoiceInputView: View {
         Group {
             if !viewModel.parsedEvents.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
-                    Label("Detected Events", systemImage: "sparkles")
+                    Label("Detected Items", systemImage: "sparkles")
                         .font(.subheadline.bold())
                         .foregroundStyle(.secondary)
 
@@ -134,7 +134,7 @@ struct VoiceInputView: View {
                             ProgressView()
                                 .tint(.white)
                         }
-                        Text(viewModel.isProcessing ? "Syncing..." : "Add to Calendar & Reminders")
+                        Text(viewModel.isProcessing ? "Saving..." : "Save to Calendar & Reminders")
                             .fontWeight(.semibold)
                     }
                     .frame(maxWidth: .infinity)
@@ -173,15 +173,17 @@ struct ParsedEventCard: View {
                     Text(event.title)
                         .font(.headline)
 
-                    if let date = event.date {
-                        HStack(spacing: 4) {
-                            Image(systemName: "clock")
-                                .font(.caption)
-                            Text(formatDate(date))
-                                .font(.subheadline)
-                        }
-                        .foregroundStyle(.secondary)
+                    Text(destinationLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(event.destination == .reminderOnly ? .green : .indigo)
+
+                    HStack(spacing: 4) {
+                        Image(systemName: event.date == nil ? "calendar.badge.exclamationmark" : "clock")
+                            .font(.caption)
+                        Text(event.date.map(formatDate) ?? "No due date yet")
+                            .font(.subheadline)
                     }
+                    .foregroundStyle(.secondary)
                 }
 
                 Spacer()
@@ -207,10 +209,16 @@ struct ParsedEventCard: View {
                 }
             }
 
+            if event.needsDatePrompt {
+                Text("This will save as an iPhone Reminder even without a due date. Add a date below if you want it scheduled.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if isExpanded {
                 Divider()
 
-                TextField("Event title", text: $editingTitle)
+                TextField("Item title", text: $editingTitle)
                     .textFieldStyle(.roundedBorder)
                     .onAppear { editingTitle = event.title }
                     .onChange(of: editingTitle) { _, newValue in
@@ -218,7 +226,7 @@ struct ParsedEventCard: View {
                     }
 
                 DatePicker("Date & Time", selection: $editingDate)
-                    .onAppear { editingDate = event.date ?? Date() }
+                    .onAppear { editingDate = event.date ?? Date().addingTimeInterval(3600) }
                     .onChange(of: editingDate) { _, newValue in
                         onUpdate(nil, newValue, nil)
                     }
@@ -234,6 +242,15 @@ struct ParsedEventCard: View {
         .background(Color(.systemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
+    }
+
+    private var destinationLabel: String {
+        switch event.destination {
+        case .calendarAndReminder:
+            return "Calendar event + reminder"
+        case .reminderOnly:
+            return "Reminder only"
+        }
     }
 
     private func formatDate(_ date: Date) -> String {

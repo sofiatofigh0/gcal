@@ -7,6 +7,17 @@ final class ReminderService {
 
     private init() {}
 
+    enum ReminderError: LocalizedError {
+        case noDefaultReminderList
+
+        var errorDescription: String? {
+            switch self {
+            case .noDefaultReminderList:
+                return "No default Reminders list is available on this iPhone. Open Apple's Reminders app once, then try again."
+            }
+        }
+    }
+
     func requestAccess() async -> Bool {
         if #available(iOS 17.0, *) {
             do {
@@ -24,20 +35,28 @@ final class ReminderService {
     }
 
     func createReminder(from task: VoiceTask) async throws -> String {
+        guard let calendar = eventStore.defaultCalendarForNewReminders() else {
+            throw ReminderError.noDefaultReminderList
+        }
+
         let reminder = EKReminder(eventStore: eventStore)
         reminder.title = task.title
         reminder.notes = task.notes ?? "Created by Voice Calendar Reminders"
-        reminder.calendar = eventStore.defaultCalendarForNewReminders()
+        reminder.calendar = calendar
 
-        let components = Calendar.current.dateComponents(
-            [.year, .month, .day, .hour, .minute],
-            from: task.date
-        )
-        reminder.dueDateComponents = components
+        if task.hasExplicitDate {
+            let components = Calendar.current.dateComponents(
+                [.year, .month, .day, .hour, .minute],
+                from: task.date
+            )
+            reminder.dueDateComponents = components
+        }
 
-        if task.hasAlarm {
-            let alarm = EKAlarm(relativeOffset: task.alarmOffset)
-            reminder.addAlarm(alarm)
+        if task.hasAlarm, task.hasExplicitDate {
+            let alarmDate = task.date.addingTimeInterval(task.alarmOffset)
+            if alarmDate > Date() {
+                reminder.addAlarm(EKAlarm(absoluteDate: alarmDate))
+            }
         }
 
         reminder.priority = Int(EKReminderPriority.medium.rawValue)
@@ -73,8 +92,10 @@ final class ReminderService {
         event.calendar = eventStore.defaultCalendarForNewEvents
 
         if task.hasAlarm {
-            let alarm = EKAlarm(relativeOffset: task.alarmOffset)
-            event.addAlarm(alarm)
+            let alarmDate = task.date.addingTimeInterval(task.alarmOffset)
+            if alarmDate > Date() {
+                event.addAlarm(EKAlarm(absoluteDate: alarmDate))
+            }
         }
 
         try eventStore.save(event, span: .thisEvent)
