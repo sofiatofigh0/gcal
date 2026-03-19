@@ -75,7 +75,6 @@ final class VoiceInputViewModel: ObservableObject {
         var tasks = persistence.loadTasks()
         var successCount = 0
         var failCount = 0
-        var firstError: String?
 
         for event in parsedEvents {
             guard var task = event.toVoiceTask(rawTranscription: transcribedText) else {
@@ -87,40 +86,29 @@ final class VoiceInputViewModel: ObservableObject {
 
             // Google Calendar
             if googleCalendar.isSignedIn {
-                do {
-                    let eventId = try await googleCalendar.createEvent(task: task)
+                if let eventId = try? await googleCalendar.createEvent(task: task) {
                     task.googleCalendarEventId = eventId
                     didSomething = true
-                } catch {
-                    if firstError == nil { firstError = "Google Calendar failed" }
                 }
             }
 
             // iPhone Calendar via EventKit
-            do {
-                let calEventId = try await reminderService.createCalendarEvent(from: task)
+            if let calEventId = try? reminderService.createCalendarEvent(from: task) {
                 task.calendarEventIdentifier = calEventId
                 didSomething = true
-            } catch {
-                if firstError == nil { firstError = error.localizedDescription }
             }
 
             // iPhone Reminders
-            do {
-                let reminderId = try await reminderService.createReminder(from: task)
+            if let reminderId = try? reminderService.createReminder(from: task) {
                 task.reminderIdentifier = reminderId
                 didSomething = true
-            } catch {
-                if firstError == nil { firstError = error.localizedDescription }
             }
 
-            // In-app alarm + local notification (always scheduled, works independently)
-            do {
-                let alarmId = try await alarmService.scheduleAlarm(for: task)
-                task.alarmNotificationId = alarmId
-                didSomething = true
-            } catch {
-                if firstError == nil { firstError = error.localizedDescription }
+            // Local notification alarm (backup)
+            if task.hasAlarm {
+                if let alarmId = try? await alarmService.scheduleAlarm(for: task) {
+                    task.alarmNotificationId = alarmId
+                }
             }
 
             if didSomething {
@@ -136,12 +124,10 @@ final class VoiceInputViewModel: ObservableObject {
 
         persistence.saveTasks(tasks)
 
-        if failCount == 0 && successCount > 0 {
+        if failCount == 0 {
             statusMessage = "Successfully added \(successCount) event\(successCount == 1 ? "" : "s")!"
         } else if successCount > 0 {
-            statusMessage = "Added \(successCount), \(failCount) failed."
-        } else if let firstError {
-            statusMessage = "Could not save: \(firstError)"
+            statusMessage = "Added \(successCount) event\(successCount == 1 ? "" : "s"), \(failCount) could not be saved."
         } else {
             statusMessage = "Could not save events. Check permissions in Settings."
         }
