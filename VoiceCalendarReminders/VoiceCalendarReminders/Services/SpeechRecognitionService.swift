@@ -19,14 +19,21 @@ final class SpeechRecognitionService: ObservableObject {
     private init() {}
 
     func requestAuthorization() async -> Bool {
-        await withCheckedContinuation { continuation in
+        let speechGranted = await withCheckedContinuation { continuation in
             SFSpeechRecognizer.requestAuthorization { status in
-                Task { @MainActor in
-                    self.isAuthorized = (status == .authorized)
-                    continuation.resume(returning: status == .authorized)
-                }
+                continuation.resume(returning: status == .authorized)
             }
         }
+
+        let micGranted = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            AVAudioApplication.requestRecordPermission { granted in
+                continuation.resume(returning: granted)
+            }
+        }
+
+        let authorized = speechGranted && micGranted
+        self.isAuthorized = authorized
+        return authorized
     }
 
     func startRecording() throws {

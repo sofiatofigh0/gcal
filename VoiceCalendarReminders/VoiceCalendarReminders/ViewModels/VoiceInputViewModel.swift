@@ -8,6 +8,8 @@ final class VoiceInputViewModel: ObservableObject {
     @Published var statusMessage = ""
     @Published var showError = false
     @Published var errorMessage = ""
+    @Published var isRecording = false
+    @Published var transcribedText = ""
 
     let speechService = SpeechRecognitionService.shared
     private let parser = NaturalLanguageParser.shared
@@ -15,9 +17,26 @@ final class VoiceInputViewModel: ObservableObject {
     private let reminderService = ReminderService.shared
     private let alarmService = AlarmService.shared
     private let persistence = TaskPersistenceService.shared
+    private var cancellables = Set<AnyCancellable>()
 
-    var isRecording: Bool { speechService.isRecording }
-    var transcribedText: String { speechService.transcribedText }
+    init() {
+        speechService.$isRecording
+            .receive(on: RunLoop.main)
+            .assign(to: &$isRecording)
+
+        speechService.$transcribedText
+            .receive(on: RunLoop.main)
+            .assign(to: &$transcribedText)
+
+        speechService.$errorMessage
+            .compactMap { $0 }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] message in
+                self?.errorMessage = message
+                self?.showError = true
+            }
+            .store(in: &cancellables)
+    }
 
     func toggleRecording() {
         if speechService.isRecording {
@@ -25,7 +44,12 @@ final class VoiceInputViewModel: ObservableObject {
             processTranscription()
         } else {
             Task {
-                _ = await speechService.requestAuthorization()
+                let authorized = await speechService.requestAuthorization()
+                guard authorized else {
+                    errorMessage = "Microphone or Speech Recognition permission denied. Enable them in Settings > Privacy."
+                    showError = true
+                    return
+                }
                 do {
                     try speechService.startRecording()
                 } catch {
@@ -37,8 +61,8 @@ final class VoiceInputViewModel: ObservableObject {
     }
 
     func processTranscription() {
-        guard !speechService.transcribedText.isEmpty else { return }
-        parsedEvents = parser.parse(speechService.transcribedText)
+        guard !transcribedText.isEmpty else { return }
+        parsedEvents = parser.parse(transcribedText)
 
         if parsedEvents.isEmpty {
             statusMessage = "Couldn't understand the events. Please try again."
@@ -57,7 +81,7 @@ final class VoiceInputViewModel: ObservableObject {
         var failureCount = 0
 
         for event in parsedEvents {
-            guard var task = event.toVoiceTask(rawTranscription: speechService.transcribedText) else {
+            guard var task = event.toVoiceTask(rawTranscription: transcribedText) else {
                 failureCount += 1
                 continue
             }
