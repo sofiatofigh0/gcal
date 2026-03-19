@@ -15,6 +15,10 @@ final class SpeechRecognitionService: ObservableObject {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    private var silenceTimer: Timer?
+    private let silenceTimeout: TimeInterval = 2.5
+
+    var onAutoStop: (() -> Void)?
 
     private init() {}
 
@@ -64,6 +68,7 @@ final class SpeechRecognitionService: ObservableObject {
 
                 if let result {
                     self.transcribedText = result.bestTranscription.formattedString
+                    self.resetSilenceTimer()
                 }
 
                 if let error {
@@ -73,6 +78,7 @@ final class SpeechRecognitionService: ObservableObject {
 
                 if result?.isFinal == true {
                     self.stopRecording()
+                    self.onAutoStop?()
                 }
             }
         }
@@ -90,9 +96,26 @@ final class SpeechRecognitionService: ObservableObject {
         recognitionRequest = request
         isRecording = true
         transcribedText = ""
+
+        resetSilenceTimer()
+    }
+
+    private func resetSilenceTimer() {
+        silenceTimer?.invalidate()
+        guard isRecording else { return }
+        silenceTimer = Timer.scheduledTimer(withTimeInterval: silenceTimeout, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isRecording, !self.transcribedText.isEmpty else { return }
+                self.stopRecording()
+                self.onAutoStop?()
+            }
+        }
     }
 
     func stopRecording() {
+        silenceTimer?.invalidate()
+        silenceTimer = nil
+
         audioEngine?.stop()
         audioEngine?.inputNode.removeTap(onBus: 0)
         recognitionRequest?.endAudio()

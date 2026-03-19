@@ -5,13 +5,20 @@ final class AlarmService {
     static let shared = AlarmService()
     private let center = UNUserNotificationCenter.current()
 
-    private init() {}
+    private init() {
+        registerCategories()
+    }
 
     func requestAuthorization() async -> Bool {
         do {
-            return try await center.requestAuthorization(options: [.alert, .sound, .badge])
+            return try await center.requestAuthorization(options: [.alert, .sound, .badge, .criticalAlert])
         } catch {
-            return false
+            // Critical alert entitlement may not be available; fall back without it
+            do {
+                return try await center.requestAuthorization(options: [.alert, .sound, .badge])
+            } catch {
+                return false
+            }
         }
     }
 
@@ -22,8 +29,14 @@ final class AlarmService {
         content.sound = .defaultCritical
         content.categoryIdentifier = "TASK_ALARM"
         content.userInfo = ["taskId": task.id.uuidString]
+        content.interruptionLevel = .timeSensitive
 
         let alarmDate = task.date.addingTimeInterval(task.alarmOffset)
+
+        guard alarmDate > Date() else {
+            return "alarm-past-\(task.id.uuidString)"
+        }
+
         let components = Calendar.current.dateComponents(
             [.year, .month, .day, .hour, .minute, .second],
             from: alarmDate
@@ -52,7 +65,7 @@ final class AlarmService {
         return "\(task.title) at \(timeStr)"
     }
 
-    func registerCategories() {
+    private func registerCategories() {
         let snoozeAction = UNNotificationAction(
             identifier: "SNOOZE_ACTION",
             title: "Snooze 10 min",

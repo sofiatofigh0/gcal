@@ -36,6 +36,10 @@ final class VoiceInputViewModel: ObservableObject {
                 self?.showError = true
             }
             .store(in: &cancellables)
+
+        speechService.onAutoStop = { [weak self] in
+            self?.processTranscription()
+        }
     }
 
     func toggleRecording() {
@@ -43,6 +47,8 @@ final class VoiceInputViewModel: ObservableObject {
             speechService.stopRecording()
             processTranscription()
         } else {
+            parsedEvents = []
+            statusMessage = ""
             Task {
                 let authorized = await speechService.requestAuthorization()
                 guard authorized else {
@@ -78,44 +84,76 @@ final class VoiceInputViewModel: ObservableObject {
 
         var tasks = persistence.loadTasks()
         var successCount = 0
-        var failureCount = 0
+        var errors: [String] = []
 
         for event in parsedEvents {
             guard var task = event.toVoiceTask(rawTranscription: transcribedText) else {
-                failureCount += 1
+                errors.append("Could not parse event.")
                 continue
             }
 
-            do {
-                if googleCalendar.isSignedIn {
+            var taskErrors: [String] = []
+
+            // Google Calendar — independent, skip if not signed in
+            if googleCalendar.isSignedIn {
+                do {
                     let eventId = try await googleCalendar.createEvent(task: task)
                     task.googleCalendarEventId = eventId
+                } catch {
+                    taskErrors.append("Google Calendar: \(error.localizedDescription)")
                 }
+            }
 
-                let reminderId = try await reminderService.createReminder(from: task)
+            // iPhone Calendar via EventKit — creates a native calendar event with alarm
+            do {
+                let calEventId = try reminderService.createCalendarEvent(from: task)
+                task.calendarEventIdentifier = calEventId
+            } catch {
+                taskErrors.append("Calendar: \(error.localizedDescription)")
+            }
+
+            // iPhone Reminders
+            do {
+                let reminderId = try reminderService.createReminder(from: task)
                 task.reminderIdentifier = reminderId
+            } catch {
+                taskErrors.append("Reminders: \(error.localizedDescription)")
+            }
 
-                if task.hasAlarm {
+            // Local notification alarm (backup alarm)
+            if task.hasAlarm {
+                do {
                     let alarmId = try await alarmService.scheduleAlarm(for: task)
                     task.alarmNotificationId = alarmId
+                } catch {
+                    taskErrors.append("Notification alarm: \(error.localizedDescription)")
                 }
-
-                task.status = .synced
-                tasks.append(task)
-                successCount += 1
-            } catch {
-                task.status = .failed
-                tasks.append(task)
-                failureCount += 1
             }
+
+            if taskErrors.isEmpty {
+                task.status = .synced
+                successCount += 1
+            } else if task.calendarEventIdentifier != nil || task.reminderIdentifier != nil {
+                // Partial success — at least one integration worked
+                task.status = .synced
+                successCount += 1
+                errors.append(contentsOf: taskErrors)
+            } else {
+                task.status = .failed
+                errors.append(contentsOf: taskErrors)
+            }
+
+            tasks.append(task)
         }
 
         persistence.saveTasks(tasks)
 
-        if failureCount == 0 {
+        if errors.isEmpty {
             statusMessage = "Successfully added \(successCount) event\(successCount == 1 ? "" : "s")!"
+        } else if successCount > 0 {
+            statusMessage = "Added \(successCount) event\(successCount == 1 ? "" : "s"). Some issues: \(errors.joined(separator: "; "))"
         } else {
-            statusMessage = "Added \(successCount), failed \(failureCount)."
+            statusMessage = "Failed: \(errors.joined(separator: "; "))"
         }
 
         parsedEvents = []

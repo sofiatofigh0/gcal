@@ -38,6 +38,10 @@ final class TaskListViewModel: ObservableObject {
             try? await googleCalendar.deleteEvent(eventId: eventId)
         }
 
+        if let calEventId = task.calendarEventIdentifier {
+            reminderService.deleteCalendarEvent(identifier: calEventId)
+        }
+
         if let reminderId = task.reminderIdentifier {
             try? reminderService.deleteReminder(identifier: reminderId)
         }

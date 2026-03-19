@@ -8,22 +8,29 @@ final class ReminderService {
     private init() {}
 
     func requestAccess() async -> Bool {
+        let remindersGranted: Bool
+        let calendarGranted: Bool
+
         if #available(iOS 17.0, *) {
-            do {
-                return try await eventStore.requestFullAccessToReminders()
-            } catch {
-                return false
-            }
+            remindersGranted = (try? await eventStore.requestFullAccessToReminders()) ?? false
+            calendarGranted = (try? await eventStore.requestFullAccessToEvents()) ?? false
         } else {
-            return await withCheckedContinuation { continuation in
+            remindersGranted = await withCheckedContinuation { continuation in
                 eventStore.requestAccess(to: .reminder) { granted, _ in
                     continuation.resume(returning: granted)
                 }
             }
+            calendarGranted = await withCheckedContinuation { continuation in
+                eventStore.requestAccess(to: .event) { granted, _ in
+                    continuation.resume(returning: granted)
+                }
+            }
         }
+
+        return remindersGranted && calendarGranted
     }
 
-    func createReminder(from task: VoiceTask) async throws -> String {
+    func createReminder(from task: VoiceTask) throws -> String {
         let reminder = EKReminder(eventStore: eventStore)
         reminder.title = task.title
         reminder.notes = task.notes ?? "Created by Voice Calendar Reminders"
@@ -46,6 +53,24 @@ final class ReminderService {
         return reminder.calendarItemIdentifier
     }
 
+    func createCalendarEvent(from task: VoiceTask) throws -> String {
+        let event = EKEvent(eventStore: eventStore)
+        event.title = task.title
+        event.notes = task.notes ?? "Created by Voice Calendar Reminders"
+        event.startDate = task.date
+        event.endDate = task.endDate ?? task.date.addingTimeInterval(3600)
+        event.isAllDay = task.isAllDay
+        event.calendar = eventStore.defaultCalendarForNewEvents
+
+        if task.hasAlarm {
+            let alarm = EKAlarm(relativeOffset: task.alarmOffset)
+            event.addAlarm(alarm)
+        }
+
+        try eventStore.save(event, span: .thisEvent)
+        return event.calendarItemIdentifier
+    }
+
     func deleteReminder(identifier: String) throws {
         let predicate = eventStore.predicateForReminders(in: nil)
 
@@ -63,21 +88,8 @@ final class ReminderService {
         }
     }
 
-    func createCalendarEvent(from task: VoiceTask) async throws -> String {
-        let event = EKEvent(eventStore: eventStore)
-        event.title = task.title
-        event.notes = task.notes ?? "Created by Voice Calendar Reminders"
-        event.startDate = task.date
-        event.endDate = task.endDate ?? task.date.addingTimeInterval(3600)
-        event.isAllDay = task.isAllDay
-        event.calendar = eventStore.defaultCalendarForNewEvents
-
-        if task.hasAlarm {
-            let alarm = EKAlarm(relativeOffset: task.alarmOffset)
-            event.addAlarm(alarm)
-        }
-
-        try eventStore.save(event, span: .thisEvent)
-        return event.calendarItemIdentifier
+    func deleteCalendarEvent(identifier: String) {
+        guard let event = eventStore.calendarItem(withIdentifier: identifier) as? EKEvent else { return }
+        try? eventStore.remove(event, span: .thisEvent)
     }
 }

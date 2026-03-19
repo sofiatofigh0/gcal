@@ -121,6 +121,12 @@ struct TaskRow: View {
                         .foregroundStyle(.blue)
                 }
 
+                if task.calendarEventIdentifier != nil {
+                    Image(systemName: "calendar")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+
                 if task.reminderIdentifier != nil {
                     Image(systemName: "checklist")
                         .font(.caption)
